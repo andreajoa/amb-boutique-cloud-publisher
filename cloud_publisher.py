@@ -66,7 +66,7 @@ def list_ready(drive, folder_id):
     result = drive.files().list(
         q=f"'{folder_id}' in parents and trashed = false",
         fields="nextPageToken,files(id,name,mimeType,size,md5Checksum,modifiedTime,parents,appProperties)",
-        orderBy="modifiedTime desc", page_size=100,
+        orderBy="modifiedTime desc", pageSize=100,
         supportsAllDrives=True, includeItemsFromAllDrives=True,
     ).execute()
     return result.get("files", [])
