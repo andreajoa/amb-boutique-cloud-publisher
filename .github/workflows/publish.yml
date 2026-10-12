@@ -24,6 +24,8 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Install ffmpeg (ffprobe validates every video before upload)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg && ffprobe -version | head -1
       - name: Install Google API libraries
         run: pip install -r requirements.txt
       - name: Check YouTube queue and publish one eligible video
