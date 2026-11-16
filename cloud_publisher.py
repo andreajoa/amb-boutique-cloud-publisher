@@ -26,8 +26,8 @@ from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
 
 log = logging.getLogger("amb-youtube")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-OWNER = "alanantonioshopify@gmail.com"
-CHANNEL_HANDLE = "@ambb.outique"
+OWNER = os.environ.get("GOOGLE_OWNER_EMAIL", "").lower()
+CHANNEL_HANDLE = os.environ.get("YOUTUBE_CHANNEL_HANDLE", "").lower()
 VIDEO_EXTS = {".mp4", ".mov", ".m4v", ".webm"}
 THUMB_EXTS = {".jpg", ".jpeg", ".png"}
 SCOPES = ["https://www.googleapis.com/auth/youtube.upload",
@@ -43,6 +43,8 @@ def required(name):
     return value
 
 def google_clients():
+    required("GOOGLE_OWNER_EMAIL")
+    required("YOUTUBE_CHANNEL_HANDLE")
     token = json.loads(required("GOOGLE_OAUTH_TOKEN_JSON"))
     creds = Credentials.from_authorized_user_info(token, SCOPES)
     if creds.expired:
@@ -62,7 +64,7 @@ def google_clients():
     ch = channels[0]
     if ch["id"] != required("YOUTUBE_CHANNEL_ID") or ch.get("snippet",{}).get("customUrl","").lower() != CHANNEL_HANDLE:
         raise RuntimeError("Canal incorreto. Somente @AMBB.OUTIQUE é autorizado.")
-    log.info("Identidades confirmadas: %s / %s", OWNER, CHANNEL_HANDLE)
+    log.info("Identidades do Drive e YouTube confirmadas.")
     return drive, yt
 
 def files_in(drive, folder):
@@ -246,6 +248,9 @@ def run():
     candidates=candidate_list(shorts,horizontal)
     log.info("Fila: %d Shorts e %d horizontais; %d vídeos identificados",
         len(shorts),len(horizontal),len(candidates))
+    if os.environ.get("CHECK_ONLY", "").lower() == "true":
+        log.info("Verificação concluída; nenhuma publicação ou alteração no Drive.")
+        return
     for kind,item,thumb in candidates:
         state=(item.get("appProperties") or {}).get("amb_publish_status","")
         if state in ("inflight","needs_review","uploaded"):

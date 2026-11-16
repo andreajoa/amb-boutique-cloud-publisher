@@ -19,6 +19,16 @@ THUMB = {"id":"thumb-1","name":"Mabel_Dress.jpg","size":"50","modifiedTime":"202
 SHORT = {"id":"short-1","name":"Autumn_Look.mp4","size":"150","modifiedTime":"2026-10-09T12:02:00Z"}
 
 class Tests(unittest.TestCase):
+    def test_check_only_reads_queue_without_upload_or_drive_mutation(self):
+        with patch.dict(os.environ, {**ENV, "CHECK_ONLY": "true"}), \
+             patch.object(p, "google_clients", return_value=(MagicMock(), MagicMock())), \
+             patch.object(p, "files_in", side_effect=[[SHORT], []]), \
+             patch.object(p, "process_item") as send, \
+             patch.object(p, "move_and_mark") as move:
+            p.run()
+            send.assert_not_called()
+            move.assert_not_called()
+
     def test_no_files_means_no_upload(self):
         with patch.dict(os.environ, ENV), patch.object(p,"google_clients",return_value=(MagicMock(),MagicMock())) as auth, \
              patch.object(p,"files_in",return_value=[]),patch.object(p,"process_item") as send:
