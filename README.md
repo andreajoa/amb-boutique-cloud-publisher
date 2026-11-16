@@ -4,7 +4,7 @@ Publishes one eligible video per execution, approximately every 15 minutes, usin
 
 Shorts must be vertical and at most 180 seconds. Landscape videos require a matching image with the same filename stem. Published files are archived in Drive. Uncertain uploads are marked for review and never blindly uploaded again.
 
-Manual runs default to a read-only connectivity check. Scheduled runs publish only when AUTO_PUBLISH_ENABLED is true. Empty queues produce no uploads.
+Runs publish only when AUTO_PUBLISH_ENABLED is true. Empty queues produce no uploads. For a read-only connectivity check, manually run with check_only=true. The default remains publishing to preserve existing external schedule dispatches.
 
 Required Secrets: AUTO_PUBLISH_ENABLED, GOOGLE_OAUTH_TOKEN_JSON, GOOGLE_OWNER_EMAIL, YOUTUBE_CHANNEL_ID, YOUTUBE_CHANNEL_HANDLE, DRIVE_SHORTS_FOLDER_ID, DRIVE_HORIZONTAL_FOLDER_ID, DRIVE_POSTED_SHORTS_ID, DRIVE_POSTED_HORIZONTAL_ID, DRIVE_REVIEW_SHORTS_ID, DRIVE_REVIEW_HORIZONTAL_ID.
 

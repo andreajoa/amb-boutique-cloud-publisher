@@ -7,7 +7,7 @@ on:
       check_only:
         description: Verify credentials and queues without uploading
         type: boolean
-        default: true
+        default: false
 
 permissions:
   contents: read
