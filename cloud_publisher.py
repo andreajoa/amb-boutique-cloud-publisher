@@ -17,7 +17,8 @@ import shutil
 import subprocess
 import tempfile
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+from zoneinfo import ZoneInfo
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
@@ -35,6 +36,11 @@ SCOPES = ["https://www.googleapis.com/auth/youtube.upload",
           "https://www.googleapis.com/auth/drive"]
 MAX_BYTES = 1400 * 1024 * 1024
 MAX_THUMB_BYTES = 50 * 1024 * 1024
+PUBLISH_TZ = ZoneInfo("America/Los_Angeles")
+MAX_DAILY_UPLOADS = 2
+MIN_UPLOAD_GAP = timedelta(hours=4)
+PUBLISH_START_HOUR = 9
+PUBLISH_END_HOUR = 19
 
 def required(name):
     value = os.environ.get(name)
@@ -86,6 +92,11 @@ def move_and_mark(drive, item, target, source, status, video_id=None, error=None
     if video_id:
         props["amb_youtube_video_id"] = video_id
         props["amb_youtube_link"] = "https://www.youtube.com/watch?v=" + video_id
+    now_iso = datetime.now(timezone.utc).isoformat()
+    if status == "inflight":
+        props["amb_upload_attempt_at"] = now_iso
+    if status == "uploaded":
+        props["amb_published_at"] = now_iso
     if error:
         props["amb_publish_error"] = error[:120]
     args = dict(fileId=item["id"],body={"appProperties":props},
@@ -234,6 +245,62 @@ def process_item(drive,yt,kind,item,thumb,source,target,review):
             return False
     return True
 
+def parse_timestamp(value):
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed.astimezone(timezone.utc)
+    except (TypeError, ValueError):
+        return None
+
+
+def slots_for_day(items, local_day):
+    """Count uploads and uncertain in-flight attempts; skip thumbnails."""
+    results = {}
+    for item in items:
+        if Path(item.get("name", "")).suffix.lower() not in VIDEO_EXTS:
+            continue
+        props = item.get("appProperties") or {}
+        state = props.get("amb_publish_status")
+        if state not in ("uploaded", "needs_review", "inflight"):
+            continue
+        timestamp = props.get("amb_published_at") or props.get("amb_upload_attempt_at")
+        if not timestamp and (state == "uploaded" or (state == "needs_review" and props.get("amb_youtube_video_id"))):
+            timestamp = item.get("modifiedTime")
+        when = parse_timestamp(timestamp)
+        if not when or when.astimezone(PUBLISH_TZ).date() != local_day:
+            continue
+        key = props.get("amb_youtube_video_id") or item.get("id")
+        if key and (key not in results or when > results[key]):
+            results[key] = when
+    return results
+
+
+def archived_slots(drive, folder_map, local_day):
+    """Persist daily limits in Drive, because every GitHub runner is ephemeral."""
+    archive_ids = list(dict.fromkeys(
+        folder_map[kind][idx] for kind in ("shorts", "horizontal") for idx in (1, 2)
+    ))
+    all_files = []
+    for folder_id in archive_ids:
+        all_files.extend(files_in(drive, folder_id))
+    return slots_for_day(all_files, local_day)
+
+
+def may_publish(now_utc, slots):
+    if len(slots) >= MAX_DAILY_UPLOADS:
+        return False, "Limite de 2 publicações/tentativas neste dia. Nova checagem da fila somente amanhã."
+    if slots and now_utc - max(slots.values()) < MIN_UPLOAD_GAP:
+        return False, "Aguardando 4 horas desde a publicação/tentativa anterior."
+    return True, ""
+
+
+def within_business_hours(now_utc):
+    hour = now_utc.astimezone(PUBLISH_TZ).hour
+    return PUBLISH_START_HOUR <= hour < PUBLISH_END_HOUR
+
+
 def run():
     if os.environ.get("AUTO_PUBLISH_ENABLED","").lower()!="true":
         log.info("Desativado por configuração.")
@@ -242,9 +309,28 @@ def run():
         "shorts":(required("DRIVE_SHORTS_FOLDER_ID"),required("DRIVE_POSTED_SHORTS_ID"),required("DRIVE_REVIEW_SHORTS_ID")),
         "horizontal":(required("DRIVE_HORIZONTAL_FOLDER_ID"),required("DRIVE_POSTED_HORIZONTAL_ID"),required("DRIVE_REVIEW_HORIZONTAL_ID")),
     }
+    check_only = os.environ.get("CHECK_ONLY", "").lower() == "true"
+    now_utc = datetime.now(timezone.utc)
+    if not check_only and not within_business_hours(now_utc):
+        log.info("Fora da janela 09h–19h em San Diego. Nenhuma consulta à fila.")
+        return
     drive,yt=google_clients()
+    slots = {}
+    if not check_only:
+        slots = archived_slots(drive, folder_map, now_utc.astimezone(PUBLISH_TZ).date())
+        allowed, reason = may_publish(now_utc, slots)
+        if not allowed:
+            log.info("%s Nenhuma consulta à fila.", reason)
+            return
     shorts=files_in(drive,folder_map["shorts"][0])
     horizontal=files_in(drive,folder_map["horizontal"][0])
+    if not check_only:
+        # Protect against uncertain YouTube uploads still marked in-flight in the ready queue.
+        slots.update(slots_for_day(shorts + horizontal, now_utc.astimezone(PUBLISH_TZ).date()))
+        allowed, reason = may_publish(now_utc, slots)
+        if not allowed:
+            log.info("%s", reason)
+            return
     candidates=candidate_list(shorts,horizontal)
     log.info("Fila: %d Shorts e %d horizontais; %d vídeos identificados",
         len(shorts),len(horizontal),len(candidates))
