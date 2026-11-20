@@ -1,6 +1,6 @@
 # Drive to YouTube cloud publisher
 
-Publishes one eligible video per execution, approximately every 15 minutes, using a standard GitHub-hosted Ubuntu runner. This public repository contains code only. OAuth credentials, account identity and Drive folder IDs are configured in Actions Secrets.
+Checks the queue every four hours using a GitHub-hosted Ubuntu runner. Publishes at most **two videos per calendar day** in the America/Los_Angeles time zone (San Diego), with **at least four hours** between videos and at most one upload per run. Posting window: 09:00–19:00 San Diego time. After the two daily slots have been used, subsequent scheduled runs **do not scan the pending videos** until the next San Diego calendar day. Counts are persisted in Drive using posted/review folders and appProperties (not in ephemeral GitHub Actions storage). This public repository contains code only. OAuth credentials, account identity and Drive folder IDs are configured in Actions Secrets.
 
 Shorts must be vertical and at most 180 seconds. Landscape videos require a matching image with the same filename stem. Published files are archived in Drive. Uncertain uploads are marked for review and never blindly uploaded again.
 
