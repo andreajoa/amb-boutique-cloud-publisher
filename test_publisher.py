@@ -2,6 +2,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from datetime import datetime, timezone, timedelta
 from unittest.mock import MagicMock, patch
 import cloud_publisher as p
 
@@ -19,6 +20,57 @@ THUMB = {"id":"thumb-1","name":"Mabel_Dress.jpg","size":"50","modifiedTime":"202
 SHORT = {"id":"short-1","name":"Autumn_Look.mp4","size":"150","modifiedTime":"2026-10-09T12:02:00Z"}
 
 class Tests(unittest.TestCase):
+    def test_daily_two_upload_cap_skips_queued_folders(self):
+        now = datetime(2026, 11, 19, 22, 7, tzinfo=timezone.utc)
+        history = {
+            "youtube1": datetime(2026, 11, 19, 17, 10, tzinfo=timezone.utc),
+            "youtube2": datetime(2026, 11, 19, 21, 12, tzinfo=timezone.utc),
+        }
+        self.assertFalse(p.may_publish(now, history)[0])
+        with patch.dict(os.environ, ENV), patch.object(p, "within_business_hours", return_value=True), \
+             patch.object(p, "google_clients", return_value=(MagicMock(), MagicMock())), \
+             patch.object(p, "archived_slots", return_value=history), \
+             patch.object(p, "files_in") as scan_queue, patch.object(p, "process_item") as send:
+            p.run()
+            scan_queue.assert_not_called()
+            send.assert_not_called()
+
+    def test_four_hour_minimum_between_uploads(self):
+        now = datetime(2026, 11, 19, 22, 0, tzinfo=timezone.utc)
+        self.assertFalse(p.may_publish(now, {"yt": now - timedelta(hours=3, minutes=59)})[0])
+        self.assertTrue(p.may_publish(now, {"yt": now - timedelta(hours=4)})[0])
+        self.assertTrue(p.may_publish(now, {})[0])
+
+    def test_local_day_reset_and_ignore_thumbnail(self):
+        items = [
+            {"id":"video","name":"a.mp4","appProperties":{
+                "amb_publish_status":"uploaded","amb_published_at":"2026-11-19T17:10:00Z",
+                "amb_youtube_video_id":"yt1"}},
+            {"id":"thumb","name":"a.jpg","appProperties":{
+                "amb_publish_status":"uploaded","amb_published_at":"2026-11-19T17:10:00Z",
+                "amb_youtube_video_id":"yt1"}},
+        ]
+        self.assertEqual(len(p.slots_for_day(items, datetime(2026, 11, 19).date())), 1)
+        self.assertEqual(p.slots_for_day(items, datetime(2026, 11, 20).date()), {})
+
+    def test_san_diego_posting_window(self):
+        self.assertTrue(p.within_business_hours(datetime(2026, 11, 19, 17, tzinfo=timezone.utc)))
+        self.assertFalse(p.within_business_hours(datetime(2026, 11, 19, 12, tzinfo=timezone.utc)))
+
+    def test_legacy_upload_and_inflight_count_as_daily_slots(self):
+        files = [
+            {"id":"legacy","name":"legacy.mp4","modifiedTime":"2026-11-19T17:00:00Z",
+             "appProperties":{"amb_publish_status":"uploaded"}},
+            {"id":"uncertain","name":"uncertain.mp4","appProperties":{
+                "amb_publish_status":"inflight","amb_upload_attempt_at":"2026-11-19T18:00:00Z"}},
+        ]
+        self.assertEqual(len(p.slots_for_day(files, datetime(2026, 11, 19).date())), 2)
+
+    def test_failed_validation_needs_review_does_not_consume_slot(self):
+        files = [{"id":"bad","name":"bad.mp4","modifiedTime":"2026-11-19T17:00:00Z",
+                  "appProperties":{"amb_publish_status":"needs_review"}}]
+        self.assertEqual(p.slots_for_day(files, datetime(2026, 11, 19).date()), {})
+
     def test_check_only_reads_queue_without_upload_or_drive_mutation(self):
         with patch.dict(os.environ, {**ENV, "CHECK_ONLY": "true"}), \
              patch.object(p, "google_clients", return_value=(MagicMock(), MagicMock())), \
@@ -30,7 +82,9 @@ class Tests(unittest.TestCase):
             move.assert_not_called()
 
     def test_no_files_means_no_upload(self):
-        with patch.dict(os.environ, ENV), patch.object(p,"google_clients",return_value=(MagicMock(),MagicMock())) as auth, \
+        with patch.dict(os.environ, ENV), patch.object(p,"within_business_hours",return_value=True), \
+             patch.object(p,"archived_slots",return_value={}), \
+             patch.object(p,"google_clients",return_value=(MagicMock(),MagicMock())) as auth, \
              patch.object(p,"files_in",return_value=[]),patch.object(p,"process_item") as send:
             p.run()
             auth.assert_called_once()
@@ -41,7 +95,9 @@ class Tests(unittest.TestCase):
         self.assertEqual(candidates,[])
 
     def test_horizontal_waits_for_thumbnail(self):
-        with patch.dict(os.environ,ENV),patch.object(p,"google_clients",return_value=(MagicMock(),MagicMock())), \
+        with patch.dict(os.environ,ENV),patch.object(p,"within_business_hours",return_value=True), \
+             patch.object(p,"archived_slots",return_value={}), \
+             patch.object(p,"google_clients",return_value=(MagicMock(),MagicMock())), \
              patch.object(p,"files_in",side_effect=[[],[HORIZONTAL]]),patch.object(p,"process_item") as send:
             p.run()
             send.assert_not_called()
